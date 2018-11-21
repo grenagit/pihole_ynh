@@ -26,6 +26,7 @@ path_url=$YNH_APP_ARG_PATH
 admin=$YNH_APP_ARG_ADMIN
 query_logging=$YNH_APP_ARG_QUERY_LOGGING
 enable_dhcp=$YNH_APP_ARG_ENABLE_DHCP
+is_public=$YNH_APP_ARG_IS_PUBLIC
 
 app=$YNH_APP_INSTANCE_NAME
 
@@ -50,6 +51,7 @@ ynh_webpath_register $app $domain $path_url
 
 ynh_app_setting_set $app domain $domain
 ynh_app_setting_set $app path $path_url
+ynh_app_setting_set $app is_public $is_public
 ynh_app_setting_set $app admin $admin
 ynh_app_setting_set $app query_logging $query_logging
 ynh_app_setting_set $app enable_dhcp $enable_dhcp
@@ -153,7 +155,7 @@ chown $dnsmasq_user:root /var/log/pihole.log
 #=================================================
 
 # Cette configuration sudoers autorise pihole à exécuter /usr/local/bin/pihole en root sans mot de passe. Pas plus.
-cp "$pihole_local_repo/advanced/pihole.sudo" /etc/sudoers.d/pihole
+cp "$pihole_local_repo/advanced/Templates/pihole.sudo" /etc/sudoers.d/pihole
 echo "$app ALL=NOPASSWD: /usr/local/bin/pihole" >> /etc/sudoers.d/pihole
 # echo "Defaults secure_path = /sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin" >> /etc/sudoers.d/pihole
 chmod 0440 /etc/sudoers.d/pihole
@@ -162,7 +164,7 @@ chmod 0440 /etc/sudoers.d/pihole
 # INSTALL LOGROTATE SCRIPT FOR PI-HOLE
 #=================================================
 
-cp "$pihole_local_repo/advanced/logrotate" "$pihole_storage/logrotate"
+cp "$pihole_local_repo/advanced/Templates/logrotate" "$pihole_storage/logrotate"
 sed -i "/# su #/d;" "$pihole_storage/logrotate"
 
 #=================================================
@@ -170,20 +172,24 @@ sed -i "/# su #/d;" "$pihole_storage/logrotate"
 #=================================================
 
 # Get the source of Pi-Hole-FTL
-FTL_temp_path=$(mktemp -d)
-ynh_setup_source "$FTL_temp_path" FTL
+#FTL_temp_path=$(mktemp -d)
+#ynh_setup_source "$FTL_temp_path" FTL
 
 # Plutôt que télécharger le binaire C, on le compile nous-même.
-( cd "$FTL_temp_path"
-ynh_exec_warn_less make
-ynh_exec_warn_less make install )
-ynh_secure_remove "$FTL_temp_path"
+#( cd "$FTL_temp_path"
+#ynh_exec_warn_less make
+#ynh_exec_warn_less make install )
+#ynh_secure_remove "$FTL_temp_path"
+
+wget https://github.com/pi-hole/FTL/releases/download/v4.0/pihole-FTL-linux-x86_64
+install -T -m 0755 "pihole-FTL-linux-x86_64" /usr/bin/pihole-FTL
 
 cp "../conf/pihole-FTL.conf" "$pihole_storage"
 ynh_store_file_checksum "$pihole_storage/pihole-FTL.conf"	# Enregistre la somme de contrôle du fichier de config
 
-cp -a $pihole_local_repo/advanced/pihole-FTL.service /etc/init.d/pihole-FTL
+cp -a $pihole_local_repo/advanced/Templates/pihole-FTL.service /etc/init.d/pihole-FTL
 chmod +x /etc/init.d/pihole-FTL
+ynh_exec_warn_less systemctl disable dnsmasq
 ynh_exec_warn_less systemctl enable pihole-FTL
 
 #=================================================
@@ -302,7 +308,7 @@ ynh_system_reload --service_name=dnsmasq --action=restart
 # INSTALL THE CRON JOB
 #=================================================
 
-cp $pihole_local_repo/advanced/pihole.cron /etc/cron.d/pihole
+cp $pihole_local_repo/advanced/Templates/pihole.cron /etc/cron.d/pihole
 # Remove git usage for version. Which fails because we use here a release instead of master.
 ynh_replace_string ".*updatechecker.*" "#&" /etc/cron.d/pihole
 
@@ -310,7 +316,7 @@ ynh_replace_string ".*updatechecker.*" "#&" /etc/cron.d/pihole
 # BUILD THE LISTS WITH GRAVITY
 #=================================================
 
-cp "$pihole_local_repo/adlists.default" "$pihole_storage/adlists.default"
+cp "../conf/adlists.default" "$pihole_storage/adlists.list"
 ynh_exec_warn_less /opt/pihole/gravity.sh
 
 #=================================================
@@ -338,6 +344,16 @@ yunohost service add pihole-FTL --log "/var/log/pihole-FTL.log"
 #=================================================
 
 yunohost app addaccess --users=$admin $app
+
+#=================================================
+# SETUP SSOWAT
+#=================================================
+
+# If app is public, add url to SSOWat conf as skipped_uris
+if [ $is_public -eq 1 ]; then
+  # unprotected_uris allows SSO credentials to be passed anyway.
+  ynh_app_setting_set "$app" unprotected_uris "/"
+fi
 
 #=================================================
 # RELOAD NGINX
